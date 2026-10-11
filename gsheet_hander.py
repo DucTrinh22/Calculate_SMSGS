@@ -7,11 +7,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-def get_gsheet_client(credentials_path="credentials.json"):
-    """Khởi tạo kết nối tới Google Sheets"""
-    creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
-    client = gspread.authorize(creds)
-    return client
+def get_gsheet_client():
+    if "gcp_service_account" in st.secrets:
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+    return gspread.authorize(creds)
 
 def read_sheet_range(sheet_id_or_url, worksheet_name, cell_range="A1:A20"):
     """
