@@ -13,9 +13,9 @@ def get_gsheet_client(credentials_path="credentials.json"):
     client = gspread.authorize(creds)
     return client
 
-def read_sheet_range(sheet_id_or_url, worksheet_name, cell_range="A1:C10"):
+def read_sheet_range(sheet_id_or_url, worksheet_name, cell_range="A1:A20"):
     """
-    Đọc dữ liệu từ 1 range chỉ định (ví dụ: A1:C10).
+    Đọc dữ liệu từ 1 range chỉ định (ví dụ: A1:A20).
     Trả về list of lists.
     """
     client = get_gsheet_client()

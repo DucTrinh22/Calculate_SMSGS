@@ -1,65 +1,69 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
 import pandas as pd
-from bs4 import BeautifulSoup
+from gsheet_handler import read_sheet_range, write_sheet_range
 
-# Page setup
-st.set_page_config(page_title="SMS Calculator", layout="centered")
-st.title("📊 SMS Google Sheet Calculator")
+# --- CẤU HÌNH GIAO DIỆN STREAMLIT ---
+st.title("Phần mềm Tính Tin Nhắn Xổ Số & Đồng bộ Google Sheets")
 
-# 1. Connect to Google Sheets using Streamlit Secrets
-@st.cache_resource
-def get_gsheet_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    # We load credentials securely from st.secrets
-    credentials = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=scopes
-    )
-    return gspread.authorize(credentials)
+st.sidebar.header("Cấu hình Google Sheets")
+sheet_url = st.sidebar.text_input("Google Sheet URL hoặc Sheet ID")
+ws_name = st.sidebar.text_input("Tên Sheet (Worksheet Name)", value="Sheet1")
+input_range = st.sidebar.text_input("Dải ô đọc dữ liệu", value="A1:C10")
+output_start_cell = st.sidebar.text_input("Ô bắt đầu ghi kết quả", value="D1")
 
-try:
-    gc = get_gsheet_client()
+# Khởi tạo session state lưu trữ dữ liệu tính
+if "calc_result" not in st.session_state:
+    st.session_state["calc_result"] = None
 
-    # Paste your Spreadsheet ID or Sheet Name
-    SPREADSHEET_ID = "YOUR_SPREADSHEET_ID_HERE"  # Replace with your Sheet ID
-    TAB_NAME = "SMS"
-
-    # Open the spreadsheet and the specific tab
-    sheet = gc.open_by_key(SPREADSHEET_ID).worksheet(TAB_NAME)
-
-    # 2. Read existing data
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
-
-    st.subheader("Current Data from Sheet:")
-    st.dataframe(df)
-
-    # 3. Calculation and Write Back
-    if st.button("Run Calculation & Update Sheet"):
-        with st.spinner("Calculating and updating Google Sheet..."):
+# --- BƯỚC 1: LẤY DỮ LIỆU & TÍNH TOÁN ---
+if st.button("📥 1. Lấy dữ liệu từ Sheet & Tính toán"):
+    if not sheet_url or not ws_name:
+        st.error("Vui lòng điền URL và tên Sheet ở thanh bên trái!")
+    else:
+        try:
+            with st.spinner("Đang đọc dữ liệu từ Google Sheets..."):
+                raw_data = read_sheet_range(sheet_url, ws_name, input_range)
             
-            # --- EXAMPLE CALCULATION ---
-            # Suppose you want to calculate something (e.g. character count, cost, etc.)
-            # Replace this logic with your exact SMS formula:
-            results = []
-            for index, row in df.iterrows():
-                # Example: Calculate a value based on Column A / Row
-                calc_val = f"Done - Row {index + 1}"
-                results.append([calc_val])
+            # Giả sử dữ liệu đọc về là các dòng tin nhắn:
+            # Gộp các ô thành chuỗi tin nhắn hoặc xử lý từng dòng
+            st.success(f"Đã đọc thành công {len(raw_data)} dòng dữ liệu!")
+            st.write("Dữ liệu thô từ Sheet:", raw_data)
 
-            # 4. Write back to a specific range (e.g., Column C, rows C2 down to C...)
-            end_row = 1 + len(results)
-            target_range = f"C2:C{end_row}"   # Change 'C' to your destination column
+            # --- GỌI HÀM XỬ LÝ/TÍNH TOÁN CỦA BẠN TỪ CODE CŨ ---
+            # Ví dụ: nối các dòng thành text để đưa vào hàm parse hiện tại của bạn:
+            combined_sms_text = "\n".join([" ".join(str(cell) for cell in row) for row in raw_data])
             
-            # Update the range in Google Sheet
-            sheet.update(range_name=target_range, values=results)
+            # [CHÈN HÀM XỬ LÝ TIN NHẮN TỪ APP.PY CỦA BẠN TẠI ĐÂY]
+            # Giả sử kết quả trả về là một DataFrame hoặc bảng kết quả:
+            # df_result = your_calculation_function(combined_sms_text)
+            
+            # Ví dụ mẫu bảng kết quả:
+            df_result = pd.DataFrame({
+                "STT": range(1, len(raw_data) + 1),
+                "NoiDungGoc": [str(r) for r in raw_data],
+                "KetQuaTinh": ["Đã tính " + str(i) for i in range(1, len(raw_data) + 1)],
+                "TongTien": [100000 * i for i in range(1, len(raw_data) + 1)]
+            })
+            
+            st.session_state["calc_result"] = df_result
+            st.subheader("Kết quả sau khi tính toán:")
+            st.dataframe(df_result)
+            
+        except Exception as e:
+            st.error(f"Lỗi khi xử lý: {str(e)}")
 
-            st.success(f"Successfully updated range {target_range} in tab '{TAB_NAME}'!")
-
-except Exception as e:
-    st.error(f"Error: {e}")
+# --- BƯỚC 2: GHI NGƯỢC LẠI GOOGLE SHEET ---
+if st.session_state["calc_result"] is not None:
+    if st.button("📤 2. Ghi kết quả về Google Sheet"):
+        try:
+            df_to_export = st.session_state["calc_result"]
+            
+            # Chuyển DataFrame thành dạng list 2 chiều bao gồm tiêu đề
+            values_to_write = [df_to_export.columns.tolist()] + df_to_export.astype(str).values.tolist()
+            
+            with st.spinner("Đang ghi dữ liệu vào Google Sheet..."):
+                write_sheet_range(sheet_url, ws_name, output_start_cell, values_to_write)
+                
+            st.success(f"✅ Đã ghi thành công kết quả từ ô {output_start_cell}!")
+        except Exception as e:
+            st.error(f"Lỗi khi ghi dữ liệu: {str(e)}")
