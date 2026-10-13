@@ -59,7 +59,7 @@ DAI_XO_SO = {
     "Ninh Thuận": {"NT", "nt", "nthuan", "ninhthuan", "ninh thuan", "nth"},
     "Quảng Ngãi": {"QNg", "qng", "quangngai", "quang ngai", "qngai"},
     "Đắk Nông": {"DNong", "dnong", "daknong", "dak nong", "dkn"},
-    "Kon Tum": {"KTum", "ktum", "kontum", "kon tum"},
+    "Kon Tum": {"KTum", "ktum", "kontum", "kon tum", "ktm"},
 
     # Đài gộp
     "2 Đài MN": {"2dmn", "2d mn", "2dai", "2DMN" },
