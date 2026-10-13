@@ -17,7 +17,7 @@ def get_gsheet_client():
         creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
     return gspread.authorize(creds)
 
-def read_sheet_range(sheet_id_or_url: str, worksheet_name: str, cell_range="A1:A50"):
+def read_sheet_range(sheet_id_or_url: str, worksheet_name: str, cell_range="A2:A25"):
     client = get_gsheet_client()
     target = sheet_id_or_url.strip()
     sh = client.open_by_url(target) if target.startswith("http") else client.open_by_key(target)
