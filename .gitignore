@@ -1,0 +1,23 @@
+# ==========================================
+# 1. BẢO MẬT: File chứa thông tin kết nối Google Sheets
+# ==========================================
+credentials.json
+client_secret*.json
+.streamlit/secrets.toml
+
+# ==========================================
+# 2. Python và Môi trường ảo (Virtual Environments)
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# ==========================================
+# 3. Hệ điều hành (Các file rác tự sinh)
+# ==========================================
+.DS_Store
+Thumbs.db
