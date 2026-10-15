@@ -1,6 +1,6 @@
 # core/parser.py
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Sequence
 from config.constants import LOAI_CUOC, DAI_XO_SO, TIEN_TE, AUTO_FIX_RULES, LICH_QUAY_SO
 from core.models import Cuoc, KetQuaParse
 from datetime import datetime
@@ -33,12 +33,16 @@ class SMSParser:
         mn_match = re.match(r'^(\d)(dmn|dai|d)$', t) # 2dmn, 3dmn
         mt_match = re.match(r'^(\d)(dmt|d)$', t) # 2dmt, 3dmt
         
-        if not (mn_match or mt_match):
-            return [token] # Không phải đài gộp, trả về nguyên gốc
-            
         # Xác định vùng và số lượng đài cần lấy
-        region = "MN" if mn_match else "MT"
-        count = int(mn_match.group(1)) if mn_match else int(mt_match.group(1))
+        # Dùng if/elif/else để type-checker thu hẹp kiểu (mn_match/mt_match không còn None khi gọi .group)
+        if mn_match:
+            region = "MN"
+            count = int(mn_match.group(1))
+        elif mt_match:
+            region = "MT"
+            count = int(mt_match.group(1))
+        else:
+            return [token] # Không phải đài gộp, trả về nguyên gốc
         
         # Xác định thứ trong tuần (0=Mon, 6=Sun)
         if date_obj is None:
@@ -201,7 +205,9 @@ class SMSParser:
         
         try:
             # 5. Parse từ chuỗi đã xử lý hoàn chỉnh
-            final_token_list = text_final.split()
+            # str(text_final): " ".join(...) bị Pyright suy luận thành LiteralString,
+            # khiến .split() trả về list[LiteralString] (không gán được vào List[str] vì list là invariant)
+            final_token_list: List[str] = str(text_final).split()
             all_dai_found, cuoc_list = self._parse_tokens(final_token_list, ngay_chay)
             
             unique_dai = list(set([c.ten_dai for c in cuoc_list]))
@@ -393,18 +399,7 @@ class SMSParser:
             if mapped_token in base_bet_keywords:
                 is_bet_keyword = True
 
-            """ elif mapped_token == 'bd':
-                # Logic riêng cho Bao Đảo
-                if i == 0:
-                    is_bet_keyword = False 
-                elif i + 1 < len(tokens):
-                    next_t = tokens[i+1]
-                    if re.search(r'[nkdđtr]|\.|^0\d', next_t):
-                        is_bet_keyword = True 
-                    else:
-                        is_bet_keyword = False 
-                else:
-                    is_bet_keyword = False """
+            
 
             # [BƯỚC 2] Lưu token vào danh sách kết quả
             if is_bet_keyword:
