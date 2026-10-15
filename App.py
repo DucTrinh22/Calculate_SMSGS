@@ -3,7 +3,72 @@ import pandas as pd
 import streamlit as st
 from core.classifier import phan_loai_nhom_cuoc
 from core.parser import SMSParser
+from config.constants import DAI_XO_SO
+from core.bet_checker import BetChecker
+from core.lottery_fetcher import MinhNgocFetcher
 from gsheet_handler import read_sheet_range, write_sheet_range
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def lay_kqxs_theo_ngay(ngay):
+    """Lấy toàn bộ kết quả xổ số (MB + MT + MN) của một ngày và gộp thành dict
+    {tên_đài: [danh sách số]} để đưa vào BetChecker."""
+    date_str = ngay.strftime("%d-%m-%Y")
+    fetcher = MinhNgocFetcher()
+
+    ket_qua = {}
+    for region_slug in ("mien-bac", "mien-trung", "mien-nam"):
+        try:
+            data = fetcher.fetch_data(date_str, region_slug=region_slug)
+        except Exception:
+            data = {}
+        if data:
+            # Chuẩn hoá tên đài về key trong DAI_XO_SO để BetChecker tìm thấy
+            for ten_dai, ds_so in data.items():
+                ten_chuan = _chuan_hoa_ten_dai(ten_dai)
+                if ten_chuan:
+                    ket_qua[ten_chuan] = ds_so
+
+    return ket_qua
+
+
+# Tên đài do MinhNgocFetcher trả về có thể khác key trong DAI_XO_SO
+# (VD: "Thừa Thiên Huế" -> "Huế") -> BetChecker sẽ không tìm thấy và luôn báo trống
+_TEN_DAI_TUONG_DUONG = {
+    "Thừa Thiên Huế": "Huế",
+    "Huế": "Huế",
+    "TP.HCM": "Tp.Hcm",
+    "Tp. HCM": "Tp.Hcm",
+    "Thành phố Hồ Chí Minh": "Tp.Hcm",
+}
+
+
+def _chuan_hoa_ten_dai(ten_dai):
+    """Map tên đài lấy từ web về đúng key trong DAI_XO_SO.
+    Trả về None nếu không nhận diện được (bỏ qua đài lạ)."""
+    if not ten_dai:
+        return None
+
+    ten = str(ten_dai).strip()
+
+    # 1. Đã đúng key chuẩn thì giữ nguyên
+    if ten in DAI_XO_SO:
+        return ten
+
+    # 2. Tra bảng tương đương thủ công
+    if ten in _TEN_DAI_TUONG_DUONG:
+        return _TEN_DAI_TUONG_DUONG[ten]
+
+    # 3. Tìm qua danh sách viết tắt (không phân biệt hoa/thường)
+    ten_lower = ten.lower()
+    for key_chuan, ds_viet_tat in DAI_XO_SO.items():
+        if ten_lower == key_chuan.lower():
+            return key_chuan
+        if ten_lower in [s.lower() for s in ds_viet_tat]:
+            return key_chuan
+
+    # 4. Không nhận diện được -> bỏ qua
+    return None
 
 
 # ==============================================================================
@@ -175,13 +240,17 @@ def tinh_tien_xac_tung_cuoc(cuoc):
 
 
 def process_xoso_sms(
-    text: str, parser_instance: SMSParser, check_results_list=None
+    text: str,
+    parser_instance: SMSParser,
+    check_results_list=None,
+    bet_checker=None,
+    ngay_chay=None,
 ):
     clean_text = str(text).strip()
     if not clean_text:
         return None
 
-    res = parser_instance.parse(clean_text)
+    res = parser_instance.parse(clean_text, ngay_chay=ngay_chay)
 
     group_totals = {
         "2CB": 0,
@@ -202,11 +271,21 @@ def process_xoso_sms(
             if nhom and nhom in group_totals:
                 group_totals[nhom] += xac
 
-            # Lấy số trúng từ danh sách dò
+            # Lấy số trúng:
+            # - Nếu đã có danh sách dò sẵn (check_results_list) thì dùng luôn
+            # - Nếu chưa có nhưng đã truyền BetChecker (có dữ liệu KQXS) -> tự dò
+            ck = None
             if check_results_list and idx < len(check_results_list):
                 ck = check_results_list[idx]
-                if ck.get("status") == "win":
-                    danh_sach_trung.append(str(ck.get("message", "Trúng")))
+            elif bet_checker is not None:
+                try:
+                    ck = bet_checker.check_cuoc(cuoc)
+                except Exception:
+                    ck = None
+
+            if ck and ck.get("status") == "win":
+                thong_bao = str(ck.get("message", "")).strip()
+                danh_sach_trung.append(thong_bao if thong_bao else "Trúng")
 
     # Phân nhóm 2S và 3S
     total_2s = sum(
@@ -266,6 +345,27 @@ if st.button("📥 1. Lấy dữ liệu từ Sheet & Tính toán"):
             else:
                 st.success(f"Đã đọc thành công {len(raw_data)} hàng!")
 
+                # --- LẤY KQXS THEO NGÀY DÒ ĐỂ TÍNH CỘT "Sotrung" ---
+                bet_checker = None
+                try:
+                    with st.spinner(
+                        f"Đang tải kết quả xổ số ngày "
+                        f"{ngay_do.strftime('%d/%m/%Y')}..."
+                    ):
+                        kqxs = lay_kqxs_theo_ngay(ngay_do)
+                    if kqxs:
+                        bet_checker = BetChecker(kqxs)
+                        st.success(
+                            f"✅ Đã tải KQXS của {len(kqxs)} đài để dò số trúng."
+                        )
+                    else:
+                        st.warning(
+                            "Không tải được KQXS (chưa có kết quả hoặc lỗi mạng). "
+                            "Cột 'Sotrung' sẽ để trống."
+                        )
+                except Exception as e:
+                    st.warning(f"Không thể tải KQXS: {str(e)}")
+
                 # Khởi tạo parser cho lượt tính này
                 sms_parser = SMSParser()
 
@@ -278,14 +378,12 @@ if st.button("📥 1. Lấy dữ liệu từ Sheet & Tính toán"):
                     if not sms_clean or sms_clean.lower() == "noidungsms":
                         continue
 
-                    # TODO: Nếu bạn có hàm lấy kết quả dò theo ngày (ngay_do), truyền kết quả vào check_results_list
-                    # ví dụ: check_results = check_lottery_by_date(sms_clean, ngay_do)
-                    check_results = None
-
                     row_result = process_xoso_sms(
                         sms_clean,
                         parser_instance=sms_parser,
-                        check_results_list=check_results,
+                        check_results_list=None,
+                        bet_checker=bet_checker,
+                        ngay_chay=ngay_do,
                     )
                     if row_result:
                         calculated_rows.append(row_result)
