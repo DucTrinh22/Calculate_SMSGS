@@ -238,41 +238,54 @@ class SMSParser:
         t = text.lower()
         
 
-        # --- LOGIC KÉO SỐ (THÊM MỚI) ---
-        # Mục đích: Biến "00 kéo 05" thành "00 01 02 03 04 05"
+        # --- LOGIC KÉO SỐ (HỖ TRỢ CẢ 2 CON VÀ 3 CON) ---
         def expand_range(match):
             start_str = match.group(1)
             end_str = match.group(2)
             try:
+                # 1. Xử lý viết tắt cho 3 con (VD: '120 kéo 9' -> '120 kéo 129')
+                if len(start_str) == 3 and len(end_str) == 1:
+                    # Lấy 2 số đầu của start ghép với đuôi của end
+                    end_str = start_str[:2] + end_str
+                elif len(start_str) == 3 and len(end_str) == 2:
+                    # VD: '100 kéo 20' -> '100 kéo 120'
+                    end_str = start_str[0] + end_str
+
                 start = int(start_str)
                 end = int(end_str)
                 
-                # Nếu nhập ngược "09 kéo 00" -> tự đảo lại
+                # Nếu nhập ngược (vd: 129 kéo 120) -> tự đảo lại
                 if start > end:
                     start, end = end, start
-                
-                # [MỚI] LOGIC XÁC ĐỊNH BƯỚC NHẢY (STEP)
-                # Nếu cùng đuôi (00-90, 15-45) -> Bước nhảy 10
-                if start % 10 == end % 10:
-                    step = 10
-                else:
-                    step = 1
 
-                # Giới hạn số lượng (chống spam)
-                # Vì có step 10 nên ta nới lỏng giới hạn check khoảng cách một chút nếu cần,
-                # nhưng giữ logic cũ > 100 số thì bỏ qua là an toàn.
-                if (end - start) // step > 100:
-                    return match.group(0) 
-
-                # Xác định độ dài định dạng
+                # Định dạng độ dài (ưu tiên độ dài của start_str nếu là 3 con)
                 fmt_len = max(len(start_str), len(end_str))
-                
-                # Tạo danh sách số
-                expanded = []
-                # [MỚI] Thêm tham số step vào range
-                for i in range(start, end + 1, step):
-                    # Format thêm số 0 đằng trước
-                    expanded.append(f"{i:0{fmt_len}d}")
+
+                # 2. XÁC ĐỊNH BƯỚC NHẢY (STEP) CHUẨN XÁC
+                if fmt_len == 3:
+                    # Kéo hàng trăm: cùng 2 số cuối (VD: 025 kéo 925 -> 025, 125, ..., 925)
+                    if start % 100 == end % 100:
+                        step = 100
+                    # Kéo hàng chục: cùng hàng trăm và hàng đơn vị (VD: 105 kéo 195 -> 105, 115, ..., 195)
+                    elif (start // 100 == end // 100) and (start % 10 == end % 10):
+                        step = 10
+                    # Kéo liên tiếp / hàng đơn vị (VD: 120 kéo 129)
+                    else:
+                        step = 1
+                else:
+                    # Cho số 2 con: cùng đuôi (00 kéo 90) -> step 10, ngược lại step 1
+                    if start % 10 == end % 10 and (end - start) >= 10:
+                        step = 10
+                    else:
+                        step = 1
+
+                # 3. GIỚI HẠN SỐ LƯỢNG (chống spam/tràn bộ nhớ)
+                so_luong = (end - start) // step + 1
+                if so_luong > 100:
+                    raise Exception(f"Dãy số kéo '{match.group(0)}' sinh ra {so_luong} số (vượt mức tối đa 100 con).")
+
+                # 4. TẠO DANH SÁCH SỐ ĐƯỢC FORMAT ĐỦ CHỮ SỐ (có padding 0 ở đầu)
+                expanded = [f"{i:0{fmt_len}d}" for i in range(start, end + 1, step)]
                 
                 return " ".join(expanded)
             except Exception:
@@ -490,8 +503,12 @@ class SMSParser:
                     is_dai = True
                     break
             
+            # if not is_dai:
+            #     if re.match(r'^\d+dm[nt]$', token.lower()):
+            #         is_dai = True
             if not is_dai:
-                if re.match(r'^\d+dm[nt]$', token.lower()):
+                # Bắt cả 2d, 3d, 2dai, 2dmn, 3dmt...
+                if re.match(r'^\d+(dm[nt]|d|dai)$', token.lower()):
                     is_dai = True
             
             if is_dai:
@@ -515,8 +532,11 @@ class SMSParser:
                     is_pre_token_is_station = self._is_dai_token(pre_token)
                     
                     # Kiểm tra thêm trường hợp đài gộp (2dmn, 3dmt...)
+                    # if not is_pre_token_is_station:
+                    #     if re.match(r'^\d+dm[nt]$', pre_token.lower()):
+                    #         is_pre_token_is_station = True
                     if not is_pre_token_is_station:
-                        if re.match(r'^\d+dm[nt]$', pre_token.lower()):
+                        if re.match(r'^\d+(dm[nt]|d|dai)$', pre_token.lower()):
                             is_pre_token_is_station = True
                             
                     if is_pre_token_is_station:
@@ -586,13 +606,19 @@ class SMSParser:
                         ten_dai_hien_thi = "Chưa rõ đài"
                     
                     # LOGIC TỰ ĐỘNG ĐỔI TÊN ĐÁ THEO SỐ LƯỢNG ĐÀI ---
+                    # if loai_key in ['da', 'daa', 'dax', 'daxien', 'daX']:
+                    #     # Nếu có nhiều hơn 1 đài -> Gọi là Đá thường
+                    #     if len(current_dai_list) > 1:
+                    #         ten_loai = "Đá thường"
+                    #     # Nếu chỉ có 1 đài -> Gọi là Đá Xiên
+                    #     else:
+                    #         ten_loai = "Đá Xiên"\
+                    # LOGIC TỰ ĐỘNG ĐỔI TÊN ĐÁ THEO SỐ LƯỢNG ĐÀI ---
                     if loai_key in ['da', 'daa', 'dax', 'daxien', 'daX']:
-                        # Nếu có nhiều hơn 1 đài -> Gọi là Đá thường
                         if len(current_dai_list) > 1:
-                            ten_loai = "Đá thường"
-                        # Nếu chỉ có 1 đài -> Gọi là Đá Xiên
+                            ten_loai = "Đá Xiên"   # Nhiều đài là đá chéo/đá xiên
                         else:
-                            ten_loai = "Đá Xiên"
+                            ten_loai = "Đá thẳng"  # 1 đài là đá thẳng
                             
                     elif loai_key in LOAI_CUOC:
                         ten_loai = LOAI_CUOC[loai_key]['ten']
